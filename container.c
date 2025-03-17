@@ -23,16 +23,15 @@
     _a > _b ? _a : _b;                                                         \
   })
 
-#define STACK_SIZE 65536
+#define STACK_SIZE 64 // 64B
 #define INT_STR_SIZE 12
 #define CGROUP_DIR "/sys/fs/cgroup/container/"
 #define ROOT_DIR "/home/ubuntu/cgroup-bench/root/"
 
 #define CPU_PERCENTAGE 0.2f
-// 64MB limit
-#define MEM_LIMIT "67108864"
+#define MEM_LIMIT "67108864" // 64MB
 
-#define NUM_ITERS 128
+#define NUM_ITERS 500
 
 // #define DEBUG
 
@@ -53,7 +52,7 @@ struct Retval {
   uint8_t r1;
 };
 
-void *stack() {
+void *new_stack() {
   void *stack = malloc(STACK_SIZE);
   if (!stack) {
     fprintf(stderr, "Failed to allocate stack.\n");
@@ -78,13 +77,13 @@ void write_cgroup_rule(const char *path, const char *value) {
   int fd = open(path, O_WRONLY | O_APPEND | O_CREAT);
   DEBUG_PRINT(" with fd %d.\n", fd);
   size_t write_len = write(fd, value, strlen(value));
-  // printf("Wrote %zu bytes.\n", write_len);
+  DEBUG_PRINT("Wrote %zu bytes.\n", write_len);
   close(fd);
 }
 
 void set_cgroup_limits(pid_t pid) {
   mkdir(CGROUP_DIR, S_IRUSR | S_IWUSR);
-  printf("Constructed cgroup dirs.\n");
+  DEBUG_PRINT("Constructed cgroup dirs.\n");
 
   char pid_str[INT_STR_SIZE];
   sprintf(pid_str, "%d", pid);
@@ -98,26 +97,21 @@ void set_cgroup_limits(pid_t pid) {
 
 uint8_t add_two(uint8_t v1, uint8_t v2) { return v1 + v2; }
 
+int cloned_process(void *shm) {
+  struct Args args = *(struct Args *)shm;
+  struct Retval retval;
+  retval.r1 = add_two(args.v1, args.v2);
+  *(struct Retval *)shm = retval;
+
+  return 0;
+}
+
 int container(void *shm) {
   DEBUG_PRINT("Beginning container.\n");
 
   clearenv();
   chroot(ROOT_DIR);
   chdir("/");
-
-  // DIR *d;
-  // struct dirent *dir;
-  // d = opendir(".");
-  // if (d) {
-  //   while ((dir = readdir(d)) != NULL) {
-  //     printf("%s\n", dir->d_name);
-  //   }
-  //   closedir(d);
-  // }
-  //
-
-  // char *exec_args[] = {"/usr/bin/bash", NULL};
-  // execv("/usr/bin/bash", exec_args);
 
   struct Args args = *(struct Args *)shm;
   struct Retval retval;
@@ -126,36 +120,74 @@ int container(void *shm) {
 
   DEBUG_PRINT("Ending container.\n");
 
-  exit(0);
+  return 0;
 }
 
 int main(int argc, char *argv[]) {
   srand(time(NULL));
   DEBUG_PRINT("Begin main.\n");
 
-  // Begin
+  // Initialize arguments
+  void *shm = new_shm();
+  struct Args args = {.v1 = rand(), .v2 = rand()};
+  *(struct Args *)shm = args;
+  DEBUG_PRINT("Initialized args.\n");
+
+  // Time the basic add function
+  struct timespec tstart = {0, 0}, tend = {0, 0};
+  clock_gettime(CLOCK_MONOTONIC, &tstart);
+  for (size_t i = 0; i < NUM_ITERS; i++) {
+    add_two(args.v1, args.v2);
+  }
+  clock_gettime(CLOCK_MONOTONIC, &tend);
+  // Time in nanoseconds
+  double elapsed = ((double)tend.tv_sec * 1e9 + (double)tend.tv_nsec) -
+                   ((double)tstart.tv_sec * 1e9 + (double)tstart.tv_nsec);
+  printf("Raw function: Add takes %f ns\n", elapsed / NUM_ITERS);
+
+  // Time the clone call
+  clock_gettime(CLOCK_MONOTONIC, &tstart);
+  for (size_t i = 0; i < NUM_ITERS; i++) {
+    pid_t pid = clone(cloned_process, new_stack(), SIGCHLD, shm);
+    int status = 0;
+    waitpid(pid, &status, 0);
+    DEBUG_PRINT("Clone exited with status code %d\n", status);
+  }
+  clock_gettime(CLOCK_MONOTONIC, &tend);
+  // Time in nanoseconds
+  elapsed = ((double)tend.tv_sec * 1e9 + (double)tend.tv_nsec) -
+            ((double)tstart.tv_sec * 1e9 + (double)tstart.tv_nsec);
+  printf("Clone: Add takes %f ns\n", elapsed / NUM_ITERS);
+
+  // Time the container
+  clock_gettime(CLOCK_MONOTONIC, &tstart);
 
   for (size_t i = 0; i < NUM_ITERS; i++) {
-    void *shm = new_shm();
-    struct Args args = {.v1 = rand(), .v2 = rand()};
-    *(struct Args *)shm = args;
-
-    DEBUG_PRINT("Initialized shared memory.\n");
-
     pid_t pid =
-        clone(container, stack(),
+        clone(container, new_stack(),
               CLONE_NEWCGROUP | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWNS |
                   CLONE_NEWPID | CLONE_NEWUTS | CLONE_NEWUSER | SIGCHLD,
               shm);
     int status = 0;
     waitpid(pid, &status, 0);
+
     DEBUG_PRINT("Container exited with status code %d\n", status);
 
     struct Retval retval = *(struct Retval *)shm;
-    assert(retval.r1 == (uint8_t)(args.v1 + args.v2));
     DEBUG_PRINT("Function returned %d\n", retval.r1);
   }
-  // End
 
-  return status;
+  clock_gettime(CLOCK_MONOTONIC, &tend);
+  // Time in nanoseconds
+  elapsed = ((double)tend.tv_sec * 1e9 + (double)tend.tv_nsec) -
+            ((double)tstart.tv_sec * 1e9 + (double)tstart.tv_nsec);
+  printf("Container: Add takes %f ns\n", elapsed / NUM_ITERS);
+
+  // End
+  if (munmap(shm, sizeof(struct Args)) == -1) {
+    fprintf(stderr, "Failed to unmap shared memory.\n");
+    exit(-1);
+  }
+
+  return 0;
 }

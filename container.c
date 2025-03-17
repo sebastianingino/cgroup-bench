@@ -31,7 +31,7 @@
 #define CPU_PERCENTAGE 0.2f
 #define MEM_LIMIT "67108864" // 64MB
 
-#define NUM_ITERS 500
+#define NUM_ITERS 50
 
 // #define DEBUG
 
@@ -163,7 +163,6 @@ int main(int argc, char *argv[]) {
 
   // Time the container
   clock_gettime(CLOCK_MONOTONIC, &tstart);
-
   for (size_t i = 0; i < NUM_ITERS; i++) {
     void *stack = new_stack();
     pid_t pid =
@@ -180,7 +179,6 @@ int main(int argc, char *argv[]) {
     DEBUG_PRINT("Function returned %d\n", retval.r1);
     free(stack);
   }
-
   clock_gettime(CLOCK_MONOTONIC, &tend);
   // Time in nanoseconds
   elapsed = ((double)tend.tv_sec * 1e9 + (double)tend.tv_nsec) -
@@ -202,6 +200,23 @@ int main(int argc, char *argv[]) {
   elapsed = ((double)tend.tv_sec * 1e9 + (double)tend.tv_nsec) -
             ((double)tstart.tv_sec * 1e9 + (double)tstart.tv_nsec);
   printf("Clone + Stack Reuse: Add takes %f ns\n", elapsed / NUM_ITERS);
+
+  // best case w/o stack reuse
+  clock_gettime(CLOCK_MONOTONIC, &tstart);
+  for (size_t i = 0; i < NUM_ITERS; i++) {
+    void *stack = new_stack();
+    pid_t pid = clone(cloned_process, stack + STACK_SIZE,
+                      CLONE_NEWCGROUP | SIGCHLD, shm);
+    int status = 0;
+    waitpid(pid, &status, 0);
+    DEBUG_PRINT("Clone exited with status code %d\n", status);
+    free(stack);
+  }
+  clock_gettime(CLOCK_MONOTONIC, &tend);
+  // Time in nanoseconds
+  elapsed = ((double)tend.tv_sec * 1e9 + (double)tend.tv_nsec) -
+            ((double)tstart.tv_sec * 1e9 + (double)tstart.tv_nsec);
+  printf("Clone + new cgroup: Add takes %f ns\n", elapsed / NUM_ITERS);
 
   // End
   if (munmap(shm, sizeof(struct Args)) == -1) {

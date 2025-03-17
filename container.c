@@ -124,6 +124,52 @@ int container(void *shm) {
   return 0;
 }
 
+int test_basic_clone(void *shm) {
+  void *stack = new_stack();
+  pid_t pid = clone(cloned_process, stack + STACK_SIZE, SIGCHLD, shm);
+  int status = 0;
+  waitpid(pid, &status, 0);
+
+  DEBUG_PRINT("Clone exited with status code %d\n", status);
+  free(stack);
+  return status;
+}
+
+int test_clone_reused_stack(void *shm, void *stack) {
+  pid_t pid = clone(cloned_process, stack + STACK_SIZE, SIGCHLD, shm);
+  int status = 0;
+  waitpid(pid, &status, 0);
+
+  DEBUG_PRINT("Clone exited with status code %d\n", status);
+  return status;
+}
+
+int test_clone_cgroup(void *shm) {
+  void *stack = new_stack();
+  pid_t pid = clone(cloned_process, stack + STACK_SIZE, SIGCHLD | CLONE_NEWCGROUP, shm);
+  int status = 0;
+  waitpid(pid, &status, 0);
+
+  DEBUG_PRINT("Clone exited with status code %d\n", status);
+  free(stack);
+  return status;
+}
+
+int test_container(void *shm) {
+  void *stack = new_stack();
+  pid_t pid =
+      clone(container, stack + STACK_SIZE,
+            CLONE_NEWCGROUP | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWNS |
+                CLONE_NEWPID | CLONE_NEWUTS | CLONE_NEWUSER | SIGCHLD,
+            shm);
+  int status = 0;
+  waitpid(pid, &status, 0);
+
+  DEBUG_PRINT("Container exited with status code %d\n", status);
+  free(stack);
+  return status;
+}
+
 int main(int argc, char *argv[]) {
   srand(time(NULL));
   DEBUG_PRINT("Begin main.\n");
@@ -133,6 +179,22 @@ int main(int argc, char *argv[]) {
   struct Args args = {.v1 = rand(), .v2 = rand()};
   *(struct Args *)shm = args;
   DEBUG_PRINT("Initialized args.\n");
+
+  // Assert that the basic add function works
+  test_basic_clone(shm);
+  struct Retval retval = *(struct Retval *)shm;
+  assert(retval.r1 == add_two(args.v1, args.v2));
+  *(struct Args *)shm = args;
+
+  test_clone_cgroup(shm);
+  retval = *(struct Retval *)shm;
+  assert(retval.r1 == add_two(args.v1, args.v2));
+  *(struct Args *)shm = args;
+
+  test_container(shm);
+  retval = *(struct Retval *)shm;
+  assert(retval.r1 == add_two(args.v1, args.v2));
+  *(struct Args *)shm = args;
 
   // Time the basic add function
   struct timespec tstart = {0, 0}, tend = {0, 0};
@@ -150,12 +212,7 @@ int main(int argc, char *argv[]) {
   for (size_t i = 0, j = 128; i < NUM_EXPS; i++, j *= 2) {
     clock_gettime(CLOCK_MONOTONIC, &tstart);
     for (size_t k = 0; k < j; k++) {
-      void *stack = new_stack();
-      pid_t pid = clone(cloned_process, stack + STACK_SIZE, SIGCHLD, shm);
-      int status = 0;
-      waitpid(pid, &status, 0);
-      DEBUG_PRINT("Clone exited with status code %d\n", status);
-      free(stack);
+      test_basic_clone(shm);
     }
     clock_gettime(CLOCK_MONOTONIC, &tend);
     // Time in nanoseconds
@@ -168,20 +225,7 @@ int main(int argc, char *argv[]) {
   for (size_t i = 0, j = 128; i < NUM_EXPS; i++, j *= 2) {
     clock_gettime(CLOCK_MONOTONIC, &tstart);
     for (size_t k = 0; k < j; k++) {
-      void *stack = new_stack();
-      pid_t pid =
-          clone(container, stack + STACK_SIZE,
-                CLONE_NEWCGROUP | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWNS |
-                    CLONE_NEWPID | CLONE_NEWUTS | CLONE_NEWUSER | SIGCHLD,
-                shm);
-      int status = 0;
-      waitpid(pid, &status, 0);
-
-      DEBUG_PRINT("Container exited with status code %d\n", status);
-
-      struct Retval retval = *(struct Retval *)shm;
-      DEBUG_PRINT("Function returned %d\n", retval.r1);
-      free(stack);
+      test_container(shm);
     }
     clock_gettime(CLOCK_MONOTONIC, &tend);
     // Time in nanoseconds
@@ -194,10 +238,7 @@ int main(int argc, char *argv[]) {
   void *stack = new_stack();
   clock_gettime(CLOCK_MONOTONIC, &tstart);
   for (size_t i = 0; i < NUM_ITERS; i++) {
-    pid_t pid = clone(cloned_process, stack + STACK_SIZE, SIGCHLD, shm);
-    int status = 0;
-    waitpid(pid, &status, 0);
-    DEBUG_PRINT("Clone exited with status code %d\n", status);
+    test_clone_reused_stack(shm, stack);
   }
   free(stack);
   clock_gettime(CLOCK_MONOTONIC, &tend);
@@ -209,13 +250,7 @@ int main(int argc, char *argv[]) {
   // best case w/o stack reuse
   clock_gettime(CLOCK_MONOTONIC, &tstart);
   for (size_t i = 0; i < NUM_ITERS; i++) {
-    void *stack = new_stack();
-    pid_t pid = clone(cloned_process, stack + STACK_SIZE,
-                      CLONE_NEWCGROUP | SIGCHLD, shm);
-    int status = 0;
-    waitpid(pid, &status, 0);
-    DEBUG_PRINT("Clone exited with status code %d\n", status);
-    free(stack);
+    test_clone_cgroup(shm);
   }
   clock_gettime(CLOCK_MONOTONIC, &tend);
   // Time in nanoseconds

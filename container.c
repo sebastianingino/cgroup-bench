@@ -144,9 +144,9 @@ int test_clone_reused_stack(void *shm, void *stack) {
   return status;
 }
 
-int test_clone_cgroup(void *shm) {
+int test_clone_flags(void *shm, int flags) {
   void *stack = new_stack();
-  pid_t pid = clone(cloned_process, stack + STACK_SIZE, SIGCHLD | CLONE_NEWCGROUP, shm);
+  pid_t pid = clone(cloned_process, stack + STACK_SIZE, SIGCHLD | flags, shm);
   int status = 0;
   waitpid(pid, &status, 0);
 
@@ -186,7 +186,7 @@ int main(int argc, char *argv[]) {
   assert(retval.r1 == add_two(args.v1, args.v2));
   *(struct Args *)shm = args;
 
-  test_clone_cgroup(shm);
+  test_clone_flags(shm, CLONE_NEWCGROUP);
   retval = *(struct Retval *)shm;
   assert(retval.r1 == add_two(args.v1, args.v2));
   *(struct Args *)shm = args;
@@ -247,16 +247,27 @@ int main(int argc, char *argv[]) {
             ((double)tstart.tv_sec * 1e9 + (double)tstart.tv_nsec);
   printf("Clone + Stack Reuse: Add takes %f ns\n", elapsed / NUM_ITERS);
 
-  // best case w/o stack reuse
+  // new cgroup
   clock_gettime(CLOCK_MONOTONIC, &tstart);
   for (size_t i = 0; i < NUM_ITERS; i++) {
-    test_clone_cgroup(shm);
+    test_clone_flags(shm, CLONE_NEWCGROUP);
   }
   clock_gettime(CLOCK_MONOTONIC, &tend);
   // Time in nanoseconds
   elapsed = ((double)tend.tv_sec * 1e9 + (double)tend.tv_nsec) -
             ((double)tstart.tv_sec * 1e9 + (double)tstart.tv_nsec);
   printf("Clone + new cgroup: Add takes %f ns\n", elapsed / NUM_ITERS);
+
+  // new user
+  clock_gettime(CLOCK_MONOTONIC, &tstart);
+  for (size_t i = 0; i < NUM_ITERS; i++) {
+    test_clone_flags(shm, CLONE_NEWUSER);
+  }
+  clock_gettime(CLOCK_MONOTONIC, &tend);
+  // Time in nanoseconds
+  elapsed = ((double)tend.tv_sec * 1e9 + (double)tend.tv_nsec) -
+            ((double)tstart.tv_sec * 1e9 + (double)tstart.tv_nsec);
+  printf("Clone + new user: Add takes %f ns\n", elapsed / NUM_ITERS);
 
   // End
   if (munmap(shm, sizeof(struct Args)) == -1) {

@@ -32,6 +32,7 @@
 #define MEM_LIMIT "67108864" // 64MB
 
 #define NUM_ITERS 50
+#define NUM_EXPS 8
 
 // #define DEBUG
 
@@ -146,44 +147,48 @@ int main(int argc, char *argv[]) {
   printf("Raw function: Add takes %f ns\n", elapsed / NUM_ITERS);
 
   // Time the clone call
-  clock_gettime(CLOCK_MONOTONIC, &tstart);
-  for (size_t i = 0; i < NUM_ITERS; i++) {
-    void *stack = new_stack();
-    pid_t pid = clone(cloned_process, stack + STACK_SIZE, SIGCHLD, shm);
-    int status = 0;
-    waitpid(pid, &status, 0);
-    DEBUG_PRINT("Clone exited with status code %d\n", status);
-    free(stack);
+  for (size_t i = 0, j = 128; i < NUM_EXPS; i++, j *= 2) {
+    clock_gettime(CLOCK_MONOTONIC, &tstart);
+    for (size_t k = 0; k < j; k++) {
+      void *stack = new_stack();
+      pid_t pid = clone(cloned_process, stack + STACK_SIZE, SIGCHLD, shm);
+      int status = 0;
+      waitpid(pid, &status, 0);
+      DEBUG_PRINT("Clone exited with status code %d\n", status);
+      free(stack);
+    }
+    clock_gettime(CLOCK_MONOTONIC, &tend);
+    // Time in nanoseconds
+    elapsed = ((double)tend.tv_sec * 1e9 + (double)tend.tv_nsec) -
+              ((double)tstart.tv_sec * 1e9 + (double)tstart.tv_nsec);
+    printf("Clone: Add takes %f ns, %ld iterations\n", elapsed / j, j);
   }
-  clock_gettime(CLOCK_MONOTONIC, &tend);
-  // Time in nanoseconds
-  elapsed = ((double)tend.tv_sec * 1e9 + (double)tend.tv_nsec) -
-            ((double)tstart.tv_sec * 1e9 + (double)tstart.tv_nsec);
-  printf("Clone: Add takes %f ns\n", elapsed / NUM_ITERS);
 
   // Time the container
-  clock_gettime(CLOCK_MONOTONIC, &tstart);
-  for (size_t i = 0; i < NUM_ITERS; i++) {
-    void *stack = new_stack();
-    pid_t pid =
-        clone(container, stack + STACK_SIZE,
-              CLONE_NEWCGROUP | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWNS |
-                  CLONE_NEWPID | CLONE_NEWUTS | CLONE_NEWUSER | SIGCHLD,
-              shm);
-    int status = 0;
-    waitpid(pid, &status, 0);
+  for (size_t i = 0, j = 128; i < NUM_EXPS; i++, j *= 2) {
+    clock_gettime(CLOCK_MONOTONIC, &tstart);
+    for (size_t k = 0; k < j; k++) {
+      void *stack = new_stack();
+      pid_t pid =
+          clone(container, stack + STACK_SIZE,
+                CLONE_NEWCGROUP | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWNS |
+                    CLONE_NEWPID | CLONE_NEWUTS | CLONE_NEWUSER | SIGCHLD,
+                shm);
+      int status = 0;
+      waitpid(pid, &status, 0);
 
-    DEBUG_PRINT("Container exited with status code %d\n", status);
+      DEBUG_PRINT("Container exited with status code %d\n", status);
 
-    struct Retval retval = *(struct Retval *)shm;
-    DEBUG_PRINT("Function returned %d\n", retval.r1);
-    free(stack);
+      struct Retval retval = *(struct Retval *)shm;
+      DEBUG_PRINT("Function returned %d\n", retval.r1);
+      free(stack);
+    }
+    clock_gettime(CLOCK_MONOTONIC, &tend);
+    // Time in nanoseconds
+    elapsed = ((double)tend.tv_sec * 1e9 + (double)tend.tv_nsec) -
+              ((double)tstart.tv_sec * 1e9 + (double)tstart.tv_nsec);
+    printf("Container: Add takes %f ns, %ld iterations\n", elapsed / j, j);
   }
-  clock_gettime(CLOCK_MONOTONIC, &tend);
-  // Time in nanoseconds
-  elapsed = ((double)tend.tv_sec * 1e9 + (double)tend.tv_nsec) -
-            ((double)tstart.tv_sec * 1e9 + (double)tstart.tv_nsec);
-  printf("Container: Add takes %f ns\n", elapsed / NUM_ITERS);
 
   // Time the clone call with stack reuse
   void *stack = new_stack();

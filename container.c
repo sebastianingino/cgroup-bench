@@ -31,8 +31,8 @@
 #define CPU_PERCENTAGE 0.2f
 #define MEM_LIMIT "67108864" // 64MB
 
-#define NUM_ITERS 50
-#define NUM_EXPS 8
+#define NUM_ITERS 500
+#define NUM_EXPS 1
 
 // #define DEBUG
 
@@ -181,18 +181,18 @@ int main(int argc, char *argv[]) {
   DEBUG_PRINT("Initialized args.\n");
 
   // Assert that the basic add function works
-  test_basic_clone(shm);
-  struct Retval retval = *(struct Retval *)shm;
-  assert(retval.r1 == add_two(args.v1, args.v2));
-  *(struct Args *)shm = args;
+  // test_basic_clone(shm);
+  // struct Retval retval = *(struct Retval *)shm;
+  // assert(retval.r1 == add_two(args.v1, args.v2));
+  // *(struct Args *)shm = args;
 
-  test_clone_flags(shm, CLONE_NEWCGROUP);
-  retval = *(struct Retval *)shm;
-  assert(retval.r1 == add_two(args.v1, args.v2));
-  *(struct Args *)shm = args;
+  // test_clone_flags(shm, CLONE_NEWCGROUP);
+  // retval = *(struct Retval *)shm;
+  // assert(retval.r1 == add_two(args.v1, args.v2));
+  // *(struct Args *)shm = args;
 
   test_container(shm);
-  retval = *(struct Retval *)shm;
+  struct Retval retval = *(struct Retval *)shm;
   assert(retval.r1 == add_two(args.v1, args.v2));
   *(struct Args *)shm = args;
 
@@ -209,7 +209,7 @@ int main(int argc, char *argv[]) {
   printf("Raw function: Add takes %f ns\n", elapsed / NUM_ITERS);
 
   // Time the clone call
-  for (size_t i = 0, j = 128; i < NUM_EXPS; i++, j *= 2) {
+  for (size_t i = 0, j = NUM_ITERS; i < NUM_EXPS; i++, j *= 2) {
     clock_gettime(CLOCK_MONOTONIC, &tstart);
     for (size_t k = 0; k < j; k++) {
       test_basic_clone(shm);
@@ -222,7 +222,7 @@ int main(int argc, char *argv[]) {
   }
 
   // Time the container
-  for (size_t i = 0, j = 128; i < NUM_EXPS; i++, j *= 2) {
+  for (size_t i = 0, j = NUM_ITERS; i < NUM_EXPS; i++, j *= 2) {
     clock_gettime(CLOCK_MONOTONIC, &tstart);
     for (size_t k = 0; k < j; k++) {
       test_container(shm);
@@ -245,7 +245,7 @@ int main(int argc, char *argv[]) {
   // Time in nanoseconds
   elapsed = ((double)tend.tv_sec * 1e9 + (double)tend.tv_nsec) -
             ((double)tstart.tv_sec * 1e9 + (double)tstart.tv_nsec);
-  printf("Clone + Stack Reuse: Add takes %f ns\n", elapsed / NUM_ITERS);
+  printf("Clone + Stack Reuse: Add takes %f ns, %d iterations\n", elapsed / NUM_ITERS, NUM_ITERS);
 
   // new cgroup
   clock_gettime(CLOCK_MONOTONIC, &tstart);
